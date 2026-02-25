@@ -3,7 +3,6 @@ import {
   Post,
   UploadedFile,
   UseInterceptors,
-  Body,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiConsumes, ApiBody, ApiTags, ApiOperation } from '@nestjs/swagger';
@@ -21,8 +20,8 @@ export class UploadController {
   @ApiConsumes('multipart/form-data')
   @ApiBody({ type: UploadFileDto })
   @UseInterceptors(FileInterceptor('file'))
-  uploadFile(@UploadedFile(UploadFilePipe) file: Express.Multer.File) {
-    const result = this.uploadService.processUploadedFile(file);
+  async uploadFile(@UploadedFile(UploadFilePipe) file: Express.Multer.File) {
+    const result = await this.uploadService.processUploadedFile(file);
 
     return {
       message: 'Arquivo enviado com sucesso!',

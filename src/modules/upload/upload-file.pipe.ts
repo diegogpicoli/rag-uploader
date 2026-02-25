@@ -5,7 +5,7 @@ export const UploadFilePipe = new ParseFilePipeBuilder()
     maxSize: 1024 * 1024 * 5, // 5MB
   })
   .addFileTypeValidator({
-    fileType: /(jpg|jpeg|png|pdf|txt|csv)$/, // Exemplo de restrição de tipos
+    fileType: '.(pdf|png|jpg|jpeg|txt|csv)', // NestJS aceita extensões ou partes do mimetype
   })
   .build({
     errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY,
