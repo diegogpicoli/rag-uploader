@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 
 import { StorageModule } from './core/storage/storage.module';
 import { UploadModule } from './modules/upload/upload.module';
+import { RagModule } from './modules/rag/rag.module';
 
 @Module({
   imports: [
@@ -15,6 +16,8 @@ import { UploadModule } from './modules/upload/upload.module';
     StorageModule,
 
     UploadModule,
+
+    RagModule,
   ],
   controllers: [],
   providers: [],
