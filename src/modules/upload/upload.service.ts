@@ -11,23 +11,22 @@ export class UploadService {
     private readonly ragService: RagService,
   ) {}
 
+  /**
+   * Processo padrão: Salva o arquivo e gera embeddings no banco vetorial persistente (PGVector).
+   */
   async processUploadedFile(file: Express.Multer.File) {
-    this.logger.log(`Processando arquivo recebido: ${file.originalname}`);
+    this.logger.log(`Processando upload persistente: ${file.originalname}`);
 
-    // 1. Salva o arquivo no destino final (Disco/S3)
     const savedPath = await this.storageService.saveFile(file);
 
-    // 2. Dispara o processamento RAG (Embeddings)
-    // Nota: Em um sistema real, isso poderia ser um job em background
     try {
       await this.ragService.processDocument(savedPath);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       this.logger.error(
-        `Falha ao processar RAG para ${file.originalname}: ${errorMessage}`,
+        `Falha ao processar embeddings para ${file.originalname}: ${errorMessage}`,
       );
-      // Não travamos o upload se o RAG falhar, mas logamos o erro
     }
 
     return {
@@ -36,5 +35,30 @@ export class UploadService {
       size: `${(file.size / 1024).toFixed(2)} KB`,
       path: savedPath,
     };
+  }
+
+  /**
+   * Processo Efêmero: Processa em memória e responde instantaneamente sem persistir no banco e nem no disco.
+   */
+  async answerInstantQuestion(file: Express.Multer.File, message: string) {
+    this.logger.log(`Processando Q&A instantâneo: ${file.originalname}`);
+
+    try {
+      // Repassa o arquivo inteiro (com buffer em memória) diretamente para a IA
+      const answer = await this.ragService.answerEphemeralQuestion(
+        file,
+        message,
+      );
+
+      return {
+        originalName: file.originalname,
+        ragAnswer: answer,
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Erro ao processar Q&A instantâneo: ${errorMessage}`);
+      throw error;
+    }
   }
 }

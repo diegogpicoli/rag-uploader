@@ -1,98 +1,90 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# RAG Uploader
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Este é um projeto desenvolvido em **NestJS** que implementa um sistema de **Retrieval-Augmented Generation (RAG)** em conjunto com o LangChain, OpenAI e um banco de dados vetorial (PostgreSQL com extensão `pgvector`).
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+O projeto permite o upload de arquivos para extração de banco de dados vetorial persistente, além de permitir interações e perguntas (Q&A) tanto sobre documentos efêmeros quanto sobre o banco de dados armazenado globalmente.
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 🚀 Como Usar o Projeto
 
-## Project setup
+### Pré-requisitos
 
-```bash
-$ pnpm install
-```
+1. **Node.js** instalado na máquina.
+2. **Gerenciador de pacotes** (`pnpm` preferencialmente, pois o projeto o utiliza, ou `npm` / `yarn`).
+3. **Docker e Docker Compose** instalados (para inicializar rapidamente o PostgreSQL com a extensão `pgvector`).
+4. Conta na OpenAI com uma chave de API válida para usar o modelo de linguagem (LLM) e embeddings.
 
-## Compile and run the project
+### Configuração do Ambiente
 
-```bash
-# development
-$ pnpm run start
+1. Clone o repositório ou navegue até a pasta raiz do projeto.
+2. Crie um arquivo `.env` na raiz do projeto contendo as variáveis de ambiente necessárias (como as configurações de conexão do banco de dados e a `OPENAI_API_KEY`).
+3. Suba o banco de dados utilizando o Docker Compose:
+   ```bash
+   docker-compose up -d
+   ```
+4. Instale as dependências executando:
+   ```bash
+   pnpm install
+   ```
 
-# watch mode
-$ pnpm run start:dev
+### Executando o Projeto
 
-# production mode
-$ pnpm run start:prod
-```
-
-## Run tests
+O servidor NestJS pode ser iniciado de diversas maneiras. O modo recomendado para desenvolvimento é utilizar:
 
 ```bash
-# unit tests
-$ pnpm run test
-
-# e2e tests
-$ pnpm run test:e2e
-
-# test coverage
-$ pnpm run test:cov
+# Iniciar em modo de desenvolvimento observando as mudanças
+pnpm start:dev
 ```
 
-## Deployment
+Por padrão, a aplicação roda na porta `3000`.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+A documentação interativa da API, gerada através do Swagger, pode ser acessada através da seguinte URL após ligar a aplicação:
+👉 **[http://localhost:3000/api](http://localhost:3000/api)**
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+---
 
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
+## 🗺️ Mapeamento de Rotas
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Todas as rotas suportam acesso via HTTP, e os "schemas" de requests e responses podem ser consultados dinamicamente na página do Swagger (`/api`).
 
-## Resources
+### 1. Upload e Processamento (Persistente)
 
-Check out a few resources that may come in handy when working with NestJS:
+**`POST /upload`**
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+- **Descrição:** Realiza o upload de um arquivo, extrai seu conteúdo, fragmenta em pedaços e persiste (vectoriza) no banco de dados para base de conhecimento.
+- **Content-Type:** `multipart/form-data`
+- **Corpo da requisição:**
+  - `file`: Arquivo a ser processado (ex: PDF ou TXT).
+- **Resposta de Sucesso:**
+  - `status: 201`
+  - Retorna uma mensagem de sucesso e os dados da persistência.
 
-## Support
+### 2. Pergunta Efêmera (Instantânea)
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+**`POST /upload/ask-instant`**
 
-## Stay in touch
+- **Descrição:** Faz uma pergunta (Q&A) em tempo real (RAG Efêmero) _apenas_ sobre o arquivo enviado na requisição, sem salvá-lo de forma permanente no banco de dados vetorial.
+- **Content-Type:** `multipart/form-data`
+- **Corpo da requisição:**
+  - `file`: Arquivo para leitura.
+  - `message`: String com a pergunta a ser respondida de acordo com o contexto do documento.
+- **Resposta de Sucesso:**
+  - `status: 201`
+  - Retorna a resposta gerada extraída do documento temporário.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+### 3. Pergunta Global (Base de Conhecimento)
 
-## License
+**`POST /rag/ask-global`**
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- **Descrição:** Faz uma pergunta cujo contexto busca, de maneira global, dados cruzados advintos de _todos_ os documentos previamente processados (via upload persistente) e armazenados no seu banco vetorial.
+- **Content-Type:** `application/json`
+- **Corpo da requisição:**
+  ```json
+  {
+    "question": "Sua pergunta global aqui"
+  }
+  ```
+- **Resposta de Sucesso:**
+  - `status: 201/200`
+  - Retorna a resposta contextualizada compilada a partir da semelhança (similarity search) no DB.

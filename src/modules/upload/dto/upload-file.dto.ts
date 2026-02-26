@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Allow } from 'class-validator';
 
 export class UploadFileDto {
   @ApiProperty({
@@ -6,5 +7,6 @@ export class UploadFileDto {
     format: 'binary',
     description: 'O arquivo a ser enviado',
   })
+  @Allow()
   file: Express.Multer.File;
 }
