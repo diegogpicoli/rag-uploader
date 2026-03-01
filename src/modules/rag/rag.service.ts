@@ -1,14 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
-import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
-import { OpenAIEmbeddings } from '@langchain/openai';
 import { Document } from '@langchain/core/documents';
-import { MemoryVectorStore } from '@langchain/classic/vectorstores/memory';
-import {
-  PGVectorStore,
-  PGVectorStoreArgs,
-} from '@langchain/community/vectorstores/pgvector';
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { StringOutputParser } from '@langchain/core/output_parsers';
@@ -16,52 +8,32 @@ import {
   RunnablePassthrough,
   RunnableSequence,
 } from '@langchain/core/runnables';
-import * as fs from 'fs/promises';
-import * as path from 'path';
+import { DocumentProcessorService } from './document-processor.service';
+import { VectorStoreService } from './vector-store.service';
 
 /**
- * Serviço responsável por toda a lógica de Retrieval-Augmented Generation (RAG).
- * Centraliza a extração de texto, geração de embeddings vetoriais, armazenamento (vetorial ou em memória) e comunicação com a LLM.
- * Tecnologias Principais: NestJS (Injeção de Dependências), LangChain (Orquestração LLM), OpenAI (Embeddings e GPT), e PGVector (Busca Semântica no PostgreSQL).
+ * Maestro das operações RAG.
+ * Diferente da antiga classe complexa, esta coordena a preparação de documentos, a persistência via vetores e as chamadas de Chat do LLM.
+ * Segue fortemente o Princípio de Responsabilidade Única (SRP) ao delegar as funções pesadas e focar na orquestração dos Prompts e Pipelines LCEL.
  */
 @Injectable()
 export class RagService {
   // Logger do NestJS para registrar o rastreio da aplicação e auditoria no console.
-  // É necessário para debugar comportamentos assíncronos e pipelines da LangChain de maneira estruturada.
   private readonly logger = new Logger(RagService.name);
-
-  // Instância do provedor de Embeddings.
-  // O que faz/Por que: Converte textos (linguagem natural) em vetores (arrays de números flutuantes) de grande dimensionalidade. Isso é estruturalmente obrigatório para calcular a similaridade de cosseno e buscar textos pelo sentido semântico.
-  private embeddings: OpenAIEmbeddings;
 
   // Instância do motor do modelo de linguagem (LLM).
   // O que faz/Por que: Recebe o prompt + os contextos vetoriais (RAG) e gera a resposta em linguagem humana, interpretando e abstraindo as informações encontradas.
   private chatModel: ChatOpenAI;
 
-  // Conexão com o banco de dados vetorial principal da aplicação.
-  // O que faz/Por que: Persiste os embeddings e atua como uma engine de busca similaritária. O RAG precisa disso para acessar conhecimentos pré-enviados pelo usuário.
-  private vectorStore: PGVectorStore;
-
-  // Constantes de configuração para processamento (Chunking) - Clean Code.
-  // CHUNK_SIZE define o número máximo de caracteres de um pedaço. LLMs e Embeddings possuem limites de comprimento (tokens).
-  private readonly CHUNK_SIZE = 1000;
-  // CHUNK_OVERLAP previne que cortes no meio da frase destruam o contexto. Duplica 200 caracteres entre o corte de dois blocos vizinhos.
-  private readonly CHUNK_OVERLAP = 200;
-  // Nome fixo reservado à tabela do PGVector para evitar espalhar valores mágicos pelo código.
-  private readonly VECTOR_TABLE_NAME = 'langchain_pg_embedding';
-
-  constructor(private readonly configService: ConfigService) {
-    // Inicializamos as abstrações da OpenAI assim que o serviço é "startado" pelo NestJS.
-    // Usamos 'getRequiredConfig' como fail-fast: impede que a aplicação suba se faltar credenciais no .env.
-    this.embeddings = new OpenAIEmbeddings({
-      apiKey: this.getRequiredConfig('OPENAI_API_KEY'),
-      model: 'text-embedding-3-small',
-    });
-
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly documentProcessor: DocumentProcessorService,
+    private readonly vectorStore: VectorStoreService,
+  ) {
+    // Inicializa o gpt-4o focado em respostas literais sobre o contexto. É necessário um modelo mais robusto para lidar com muita poluição de fragmentos no contexto do RAG ("Lost in the middle").
     this.chatModel = new ChatOpenAI({
       apiKey: this.getRequiredConfig('OPENAI_API_KEY'),
-      model: 'gpt-4o-mini',
-      // Temperature 0 reduz severamente a "criatividade/alucinação" do GPT, focando numa resposta determinística calcada apenas no contexto RAG.
+      model: 'gpt-4o',
       temperature: 0,
     });
   }
@@ -69,24 +41,25 @@ export class RagService {
   /**
    * Ponto de entrada: processa um arquivo físico salvo na máquina, divide-o e guarda no PGVector.
    * Por que é necessário: Para construir a base de conhecimento persistente. Documentos grandes não cabem inteiros de uma vez no prompt LLM.
-   * O que faz: Extrai o texto cru, divide em lotes pequenos com contexto overlapping, enriquece metadados e atira pro PGVector.
    * @param filePath Caminho absoluto do arquivo a ser lido.
    */
   async processDocument(filePath: string) {
-    this.logger.log(`Iniciando processamento de embeddings para: ${filePath}`);
+    this.logger.log(
+      `Iniciando fluxo de processamento e persistência para: ${filePath}`,
+    );
 
     try {
-      // 1. Carregamento e leitura bruta: Usa PDFLoader (LangChain) se for PDF.
-      const rawDocs = await this.loadDocument(filePath);
+      // 1. Carregamento bruto abstraído do sistema de arquivos ou parser pdf
+      const rawDocs = await this.documentProcessor.loadDocument(filePath);
 
-      // 2. Fragmentação ou Chunking. Ataca o problema de "limite de janela de tokens" da LLM.
-      const splitDocs = await this.splitDocuments(rawDocs);
+      // 2. Transforma as páginas longas em pedaços mastigáveis pro LLM (Chunking)
+      const splitDocs = await this.documentProcessor.splitDocuments(rawDocs);
 
-      // 3. Enriquecimento: Prepara os timestamps e descarta metadados que poluem a base.
-      const enrichedDocs = this.enrichMetadata(splitDocs);
+      // 3. Limpa e empacota metadados nos fragmentos
+      const enrichedDocs = this.documentProcessor.enrichMetadata(splitDocs);
 
-      // 4. Transformação/Persistência: A API de Embeddings da OpenAI entra em ação aqui convertendo todos os pedaços.
-      return await this.persistToVectorStore(enrichedDocs);
+      // 4. Delegação para o VectorStore gravar persistente no PGVector.
+      return await this.vectorStore.persistToVectorStore(enrichedDocs);
     } catch (error) {
       this.handleError(error);
     }
@@ -94,26 +67,25 @@ export class RagService {
 
   /**
    * Executa a técnica de Retrieval-Augmented Generation global, pesquisando na base do PG.
-   * Por que é necessário: Permite que o usuário cruze dados de todos os documentos passados que já foram persistidos.
-   * O que faz: Traduz a pergunta para um vetor, encontra os pedaços mais próximos neste vetor via banco PostgreSQL com PGVector, insere eles no template do LLM e entrega a resposta final produzida.
-   * Tecnologias Usadas: RunnableSequence do LangChain (LCEL) para automatizar o 'pipe' (Retriever -> Prompt -> Modelo).
    * @param question A pergunta livre digitada pelo usuário.
    */
   async answerGlobalQuestion(question: string) {
     this.logger.log(`Respondendo pergunta global na base vetorial (RAG)`);
 
     try {
-      // Cria a figura do Retriever que sabe ir ao PGVector buscar os 'k=10' melhores retornos.
-      const retriever = await this.buildGlobalRetriever();
-      // Formata a ordem (system) de como a IA deve se comportar.
+      // Cria a figura do Retriever através da classe delegada de Armazenamento Vectorial.
+      // O '15' diz: Traga os 15 fragmentos mais similares.
+      const retriever = await this.vectorStore.buildGlobalRetriever(15);
+
+      // Busca Prompt Corporativo Padrão
       const prompt = this.buildGlobalPrompt();
-      // Liga as pontas: Busca baseada na Input, amarra no Prompt, chama a IA.
+
+      // Interseca o Contexto do Banco, O Modelo do GPT e o Parser do Usuário.
       const chain = this.buildRagChain(retriever, prompt, {
         logSources: true,
         separator: '\n\n---\n\n',
       });
 
-      // Bate na chain e resolve o Promise da resposta do modelo da OpenAI.
       return await chain.invoke({ input: question });
     } catch (error) {
       this.handleError(error);
@@ -122,22 +94,30 @@ export class RagService {
 
   /**
    * Realiza um ciclo de Q&A isolado sem alterar o estado do banco principal. (RAG Efêmero)
-   * Por que é necessário: Usuários as vezes só querem discutir pontualmente "um boleto ou anexo Rápido" sem inchar a base de conhecimento corporativa com documentos temporários.
-   * O que faz: Instancia um MemoryVectorStore (Banco Vetorial na Memória RAM), injeta o documento do multer nele, roda a pergunta e o lixo é coletado após o escopo fechar (GC do Node).
+   * Processando totalmente do Express Multer para a mémoria RAM em tempo de voo.
    * @param file O Buffer provindo de um request de upload em memória.
    * @param question A pergunta associada a ele.
    */
   async answerEphemeralQuestion(file: Express.Multer.File, question: string) {
-    this.logger.log(`Iniciando Q&A efêmero para: ${file.originalname}`);
+    this.logger.log(
+      `Iniciando fluxo unificado Q&A efêmero para o arquivo: ${file.originalname}`,
+    );
 
     try {
-      // Retriever temporário hospedado na memória RAM.
-      const retriever = await this.buildEphemeralRetriever(file);
-      // Prompt com regras mais estritas que reforçam sua analíse solitária desse doc.
+      // 1. Geração local em RAM do documento provido como buffer
+      const rawDocs = await this.documentProcessor.loadDocumentFromBuffer(file);
+      const splitDocs = await this.documentProcessor.splitDocuments(rawDocs);
+
+      // 2. Pede um vector store efêmero (Em RAM) temporário ao VectorStoreService
+      const retriever = await this.vectorStore.buildEphemeralRetriever(
+        splitDocs,
+        10,
+      );
+
       const prompt = this.buildEphemeralPrompt();
-      // Montagem do Pipeline LangChain como feito em outros escopos.
+
       const chain = this.buildRagChain(retriever, prompt, {
-        logSources: false,
+        logSources: false, // Menos poluição visual localmente
         separator: '\n\n',
       });
 
@@ -148,18 +128,6 @@ export class RagService {
   }
 
   // --- MÉTODOS PRIVADOS DE APROVISIONAMENTO RAG ---
-
-  /**
-   * Instancia a interface de Retriever associada ao PostgreSQL (PGVectorStore).
-   * O Retriever abstrai a chamada SQL de "similaridade top N".
-   * O 'k: 10' diz: Traga os 10 fragmentos de texto do DB que estão semanticamente mais perto da pergunta.
-   */
-  private async buildGlobalRetriever() {
-    const store = await this.getVectorStore();
-    return store.asRetriever({
-      k: 10,
-    });
-  }
 
   /**
    * Escreve o Promt Template Global corporativo.
@@ -176,23 +144,6 @@ export class RagService {
       ],
       ['human', '{input}'],
     ]);
-  }
-
-  /**
-   * Constrói o Retriever volátil baseado em memória RAM usando 'MemoryVectorStore'.
-   * O que faz: Transforma o File de buffer (Array de bytes do NestJS) em Documentos Langchain, divide-os e processa as Embeddings da OpenAI instantâneamente na RAM.
-   * Tecnologia: @langchain/classic/vectorstores/memory
-   */
-  private async buildEphemeralRetriever(file: Express.Multer.File) {
-    const docs = await this.loadDocumentFromBuffer(file);
-    const splits = await this.splitDocuments(docs);
-
-    // Processamento e salvamento provisório das Embeddings na memória da aplicação NodeJs.
-    const vectorStore = await MemoryVectorStore.fromDocuments(
-      splits,
-      this.embeddings,
-    );
-    return vectorStore.asRetriever();
   }
 
   /**
@@ -225,7 +176,7 @@ export class RagService {
       // Passo 1: Assimilar Contextos Através do Input
       {
         context: async (input: { input: string }) => {
-          // Dispara busca vetorial semântica (seja PG ou Memória)
+          // Dispara busca vetorial semântica (seja PG ou Memória intermediada pela VectorStoreService)
           const relevantDocs = await retriever.invoke(input.input);
 
           // Ponto útil para Tracking (Mostra de quais PDFs os pedaços vieram)
@@ -253,148 +204,6 @@ export class RagService {
       // Passo 4: Formatador/Parser simples que remove Metadados AIMessage Langchain, resultando numa String crua e limpa.
       new StringOutputParser(),
     ]);
-  }
-
-  /**
-   * Leitor físico especializado.
-   * Extraindo texto de formatos complexos como PDF necessita de parsers nativos.
-   * Se pdf: O PDFLoader interno que implementa pdf-parse da Mozilla assume o controle gerando 'Documents' já pré formatados.
-   * Caso comum: Lê como txt cru do FS.
-   */
-  private async loadDocument(filePath: string): Promise<Document[]> {
-    const ext = path.extname(filePath).toLowerCase();
-
-    if (ext === '.pdf') {
-      // Leitor do langchain suportado pelo NodeJS Filesystem para extrair cada página.
-      const loader = new PDFLoader(filePath);
-      return await loader.load();
-    }
-
-    const content = await fs.readFile(filePath, 'utf-8');
-    return [
-      new Document({
-        pageContent: content,
-        metadata: { source: filePath },
-      }),
-    ];
-  }
-
-  /**
-   * Buffer Loader: Estratégia in-memory para uploads Multipart.
-   * Por que é necessário: Nem sempre queremos dar I/O no disco e gravar em pastas do sistema operacional (como arquivos efêmeros). Economiza tráfego de disco.
-   * O que faz: Converte o Uint8Array do Buffer Express de volta para uma instância de Blob (Compatível com Web/PDFLoader Node). Adapta na hora.
-   */
-  private async loadDocumentFromBuffer(
-    file: Express.Multer.File,
-  ): Promise<Document[]> {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const sourceIdentifier = `memory://${file.originalname}`;
-
-    if (ext === '.pdf') {
-      // PDFLoader suporta WebBlobs, convertemos o Node.Buffer puro no formato apropriado.
-      const arrayBuffer = new Uint8Array(file.buffer).buffer;
-      const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
-      const loader = new PDFLoader(blob);
-      const docs = await loader.load();
-
-      // Assina Metadados que denotam estar na Memória, para logs coerentes.
-      return docs.map((doc) => {
-        doc.metadata.source = sourceIdentifier;
-        return doc;
-      });
-    } else {
-      const content = file.buffer.toString('utf-8');
-      return [
-        new Document({
-          pageContent: content,
-          metadata: { source: sourceIdentifier },
-        }),
-      ];
-    }
-  }
-
-  /**
-   * Algoritmo inteligente de separação (Chunking).
-   * O LangChain RecursiveCharacterTextSplitter tenta partir texto sempre respeitando quebra de linha ('\n', ' ', '.').
-   * O que faz: É preferível separar parágrafos em vez de quebrar a palavra pela metade, preservando o sentido lógico (Semântica) antes de injetar nas Embeddings.
-   */
-  private async splitDocuments(docs: Document[]): Promise<Document[]> {
-    const splitter = new RecursiveCharacterTextSplitter({
-      chunkSize: this.CHUNK_SIZE,
-      chunkOverlap: this.CHUNK_OVERLAP,
-    });
-
-    return await splitter.splitDocuments(docs);
-  }
-
-  /**
-   * Varre todos os Documentos (agora pedaços) limpando campos nulos dos metadados extraídos dos PDFs.
-   * Por que agir assim: O pgvector pode falhar ou indexar lixo com chaves erradas em sua tabela JSONB.
-   * Anexa campos úteis como chunk_index e processed_at, servindo de trilha de auditoria útil no banco de dados.
-   */
-  private enrichMetadata(docs: Document[]): Document[] {
-    return docs.map((doc, index) => {
-      const cleanMetadata = Object.fromEntries(
-        Object.entries(doc.metadata).filter(
-          ([, v]) => v !== '' && v !== null && v !== undefined,
-        ),
-      );
-
-      return new Document({
-        pageContent: doc.pageContent,
-        metadata: {
-          ...cleanMetadata,
-          chunk_index: index,
-          processed_at: new Date().toISOString(),
-        },
-      });
-    });
-  }
-
-  /**
-   * Camada final de inserção dos Pedacinhos Fragmentados no PostgreSQL (PGVector).
-   * O que faz: Ao acionar 'store.addDocuments()', o LangChain automaticamente solicita à API da OpenAI pelas "Embeddings" (O cálculo pesado) dos pedaços.
-   * Ao voltarem convertidos de palavras para vetores, ele executa um INSERT no banco na tabela informada passando o array vetorial, os metadados e o texto livre.
-   */
-  private async persistToVectorStore(docs: Document[]) {
-    this.logger.log(`Persistindo ${docs.length} chunks no PGVector...`);
-
-    const store = await this.getVectorStore();
-    await store.addDocuments(docs);
-
-    this.logger.log(`Processamento e persistência concluídos com sucesso.`);
-
-    return {
-      totalChunks: docs.length,
-      status: 'persisted_to_pgvector',
-    };
-  }
-
-  /**
-   * Singleton Manager para a Conexão PGVectorStore do LangChain.
-   * Por que é necessário: As conexões no pg precisam manter um Pool fixo pra não esgotar as rotas da lib no postgreSQL. Se já instanciado, devolve o mesmo `this.vectorStore`.
-   * O que faz: Mapeia para a LLM os nomes reais das colunas instaladas previamente via DDL/EntityType.
-   * Tecnologia: Usa a biblioteca de driver nativo 'pg' por baixo dos panos e envia chamadas de vector math suportadas em postgres.
-   */
-  private async getVectorStore(): Promise<PGVectorStore> {
-    if (this.vectorStore) return this.vectorStore;
-
-    const connectionString = this.getRequiredConfig('PGVECTOR_URL');
-
-    const config: PGVectorStoreArgs = {
-      postgresConnectionOptions: { connectionString },
-      tableName: this.VECTOR_TABLE_NAME,
-      columns: {
-        idColumnName: 'id',
-        vectorColumnName: 'embedding',
-        contentColumnName: 'document',
-        metadataColumnName: 'metadata',
-      },
-    };
-
-    // Auto-criação da tabela por default é embutida caso ainda não exista no scheme, mas o vector ext deve existir.
-    this.vectorStore = await PGVectorStore.initialize(this.embeddings, config);
-    return this.vectorStore;
   }
 
   /**
